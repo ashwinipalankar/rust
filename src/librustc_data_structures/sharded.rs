@@ -27,16 +27,16 @@ pub struct Sharded<T> {
 impl<T: Default> Default for Sharded<T> {
     #[inline]
     fn default() -> Self {
-        Self::new(|| T::default())
+        Self::new(|_| T::default())
     }
 }
 
 impl<T> Sharded<T> {
     #[inline]
-    pub fn new(mut value: impl FnMut() -> T) -> Self {
+    pub fn new(mut value: impl FnMut(usize) -> T) -> Self {
         // Create a vector of the values we want
-        let mut values: SmallVec<[_; SHARDS]> = (0..SHARDS).map(|_| {
-            CacheAligned(Lock::new(value()))
+        let mut values: SmallVec<[_; SHARDS]> = (0..SHARDS).map(|i| {
+            CacheAligned(Lock::new(value(i)))
         }).collect();
 
         // Create an unintialized array
@@ -72,13 +72,26 @@ impl<T> Sharded<T> {
     }
 
     #[inline]
-    pub fn get_shard_by_hash(&self, hash: u64) -> &Lock<T> {
+    pub fn get_shard_by_value_mut<K: Hash + ?Sized>(&mut self, val: &K) -> &mut T {
+        if SHARDS == 1 {
+            self.shards[0].0.get_mut()
+        } else {
+            self.shards[Self::get_shard_index_by_hash(make_hash(val))].0.get_mut()
+        }
+    }
+
+    #[inline]
+    fn get_shard_index_by_hash(hash: u64) -> usize {
         let hash_len = mem::size_of::<usize>();
         // Ignore the top 7 bits as hashbrown uses these and get the next SHARD_BITS highest bits.
         // hashbrown also uses the lowest bits, so we can't use those
         let bits = (hash >> (hash_len * 8 - 7 - SHARD_BITS)) as usize;
-        let i = bits % SHARDS;
-        &self.shards[i].0
+        bits % SHARDS
+    }
+
+    #[inline]
+    pub fn get_shard_by_hash(&self, hash: u64) -> &Lock<T> {
+        &self.shards[Self::get_shard_index_by_hash(hash)].0
     }
 
     pub fn lock_shards(&self) -> Vec<LockGuard<'_, T>> {

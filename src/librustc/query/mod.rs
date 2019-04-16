@@ -2,10 +2,10 @@ use crate::ty::query::QueryDescription;
 use crate::ty::query::queries;
 use crate::ty::{self, ParamEnvAnd, Ty, TyCtxt};
 use crate::ty::subst::SubstsRef;
-use crate::dep_graph::SerializedDepNodeIndex;
 use crate::hir::def_id::{CrateNum, DefId, DefIndex};
 use crate::mir;
 use crate::mir::interpret::GlobalId;
+use crate::dep_graph::DepNodeIndex;
 use crate::traits;
 use crate::traits::query::{
     CanonicalPredicateGoal, CanonicalProjectionGoal,

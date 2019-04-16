@@ -2,7 +2,7 @@
 //! generate the actual methods on tcx which find and execute the provider,
 //! manage the caches, and so forth.
 
-use crate::dep_graph::{DepNodeIndex, DepNode, DepKind, SerializedDepNodeIndex};
+use crate::dep_graph::{DepNodeIndex, DepNode, DepKind};
 use crate::ty::tls;
 use crate::ty::{self, TyCtxt};
 use crate::ty::query::Query;
@@ -413,10 +413,9 @@ impl<'tcx> TyCtxt<'tcx> {
             // try_mark_green(), so we can ignore them here.
             let loaded = self.start_query(job.job.clone(), None, |tcx| {
                 let marked = tcx.dep_graph.try_mark_green_and_read(tcx, &dep_node);
-                marked.map(|(prev_dep_node_index, dep_node_index)| {
+                marked.map(|dep_node_index| {
                     (tcx.load_from_disk_and_cache_in_memory::<Q>(
                         key.clone(),
-                        prev_dep_node_index,
                         dep_node_index,
                         &dep_node
                     ), dep_node_index)
@@ -436,7 +435,6 @@ impl<'tcx> TyCtxt<'tcx> {
     fn load_from_disk_and_cache_in_memory<Q: QueryDescription<'tcx>>(
         self,
         key: Q::Key,
-        prev_dep_node_index: SerializedDepNodeIndex,
         dep_node_index: DepNodeIndex,
         dep_node: &DepNode,
     ) -> Q::Value {
@@ -449,7 +447,7 @@ impl<'tcx> TyCtxt<'tcx> {
         let result = if Q::cache_on_disk(self.global_tcx(), key.clone()) &&
                         self.sess.opts.debugging_opts.incremental_queries {
             self.sess.profiler(|p| p.incremental_load_result_start(Q::NAME));
-            let result = Q::try_load_from_disk(self.global_tcx(), prev_dep_node_index);
+            let result = Q::try_load_from_disk(self.global_tcx(), dep_node_index);
             self.sess.profiler(|p| p.incremental_load_result_end(Q::NAME));
 
             // We always expect to find a cached result for things that
@@ -488,7 +486,7 @@ impl<'tcx> TyCtxt<'tcx> {
         // If -Zincremental-verify-ich is specified, re-hash results from
         // the cache and make sure that they have the expected fingerprint.
         if unlikely!(self.sess.opts.debugging_opts.incremental_verify_ich) {
-            self.incremental_verify_ich::<Q>(&result, dep_node, dep_node_index);
+            self.incremental_verify_ich::<Q>(&result, dep_node);
         }
 
         if unlikely!(self.sess.opts.debugging_opts.query_dep_graph) {
@@ -504,14 +502,8 @@ impl<'tcx> TyCtxt<'tcx> {
         self,
         result: &Q::Value,
         dep_node: &DepNode,
-        dep_node_index: DepNodeIndex,
     ) {
         use crate::ich::Fingerprint;
-
-        assert!(Some(self.dep_graph.fingerprint_of(dep_node_index)) ==
-                self.dep_graph.prev_fingerprint_of(dep_node),
-                "Fingerprint for green query instance not loaded \
-                    from cache: {:?}", dep_node);
 
         debug!("BEGIN verify_ich({:?})", dep_node);
         let mut hcx = self.create_stable_hashing_context();
@@ -519,9 +511,9 @@ impl<'tcx> TyCtxt<'tcx> {
         let new_hash = Q::hash_result(&mut hcx, result).unwrap_or(Fingerprint::ZERO);
         debug!("END verify_ich({:?})", dep_node);
 
-        let old_hash = self.dep_graph.fingerprint_of(dep_node_index);
+        let old_hash = self.dep_graph.prev_fingerprint_of(dep_node);
 
-        assert!(new_hash == old_hash, "Found unstable fingerprints \
+        assert!(Some(new_hash) == old_hash, "Found unstable fingerprints \
             for {:?}", dep_node);
     }
 
