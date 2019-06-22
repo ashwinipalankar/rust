@@ -1,7 +1,7 @@
 //! Code to save/load the dep-graph from files.
 
 use rustc_data_structures::fx::FxHashMap;
-use rustc::dep_graph::{PreviousDepGraph, SerializedDepGraph, WorkProduct, WorkProductId};
+use rustc::dep_graph::{PreviousDepGraph, DepGraphArgs, SerializedDepGraph, CurrentDepGraph};
 use rustc::session::Session;
 use rustc::ty::TyCtxt;
 use rustc::ty::query::OnDiskCache;
@@ -23,16 +23,14 @@ pub fn dep_graph_tcx_init<'tcx>(tcx: TyCtxt<'tcx>) {
     tcx.allocate_metadata_dep_nodes();
 }
 
-type WorkProductMap = FxHashMap<WorkProductId, WorkProduct>;
-
 pub enum LoadResult<T> {
     Ok { data: T },
     DataOutOfDate,
     Error { message: String },
 }
 
-impl LoadResult<(PreviousDepGraph, WorkProductMap)> {
-    pub fn open(self, sess: &Session) -> (PreviousDepGraph, WorkProductMap) {
+impl LoadResult<DepGraphArgs> {
+    pub fn open(self, sess: &Session) -> DepGraphArgs {
         match self {
             LoadResult::Error { message } => {
                 sess.warn(&message);
@@ -93,7 +91,7 @@ impl<T> MaybeAsync<T> {
     }
 }
 
-pub type DepGraphFuture = MaybeAsync<LoadResult<(PreviousDepGraph, WorkProductMap)>>;
+pub type DepGraphFuture = MaybeAsync<LoadResult<DepGraphArgs>>;
 
 /// Launch a thread and load the dependency graph in the background.
 pub fn load_dep_graph(sess: &Session) -> DepGraphFuture {
@@ -185,7 +183,21 @@ pub fn load_dep_graph(sess: &Session) -> DepGraphFuture {
                     let dep_graph = SerializedDepGraph::decode(&mut decoder)
                         .expect("Error reading cached dep-graph");
 
-                    LoadResult::Ok { data: (PreviousDepGraph::new(dep_graph), prev_work_products) }
+                    let (prev_graph, state) = PreviousDepGraph::new_and_state(dep_graph);
+                    let current = time_ext(
+                        time_passes,
+                        None,
+                        "background setup current dep-graph",
+                        || CurrentDepGraph::new(&prev_graph),
+                    );
+                    LoadResult::Ok {
+                        data: DepGraphArgs {
+                            state,
+                            prev_graph,
+                            prev_work_products,
+                            current,
+                        }
+                    }
                 }
             }
         })

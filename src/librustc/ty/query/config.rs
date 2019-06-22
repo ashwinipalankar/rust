@@ -1,5 +1,4 @@
-use crate::dep_graph::SerializedDepNodeIndex;
-use crate::dep_graph::DepNode;
+use crate::dep_graph::{DepNode, DepNodeIndex};
 use crate::hir::def_id::{CrateNum, DefId};
 use crate::ty::TyCtxt;
 use crate::ty::query::queries;
@@ -11,7 +10,7 @@ use crate::util::profiling::ProfileCategory;
 use std::borrow::Cow;
 use std::hash::Hash;
 use std::fmt::Debug;
-use rustc_data_structures::sync::Lock;
+use rustc_data_structures::sharded::Sharded;
 use rustc_data_structures::fingerprint::Fingerprint;
 use crate::ich::StableHashingContext;
 
@@ -31,7 +30,7 @@ pub(crate) trait QueryAccessors<'tcx>: QueryConfig<'tcx> {
     fn query(key: Self::Key) -> Query<'tcx>;
 
     // Don't use this method to access query results, instead use the methods on TyCtxt
-    fn query_cache<'a>(tcx: TyCtxt<'tcx>) -> &'a Lock<QueryCache<'tcx, Self>>;
+    fn query_cache<'a>(tcx: TyCtxt<'tcx>) -> &'a Sharded<QueryCache<'tcx, Self>>;
 
     fn to_dep_node(tcx: TyCtxt<'tcx>, key: &Self::Key) -> DepNode;
 
@@ -54,7 +53,7 @@ pub(crate) trait QueryDescription<'tcx>: QueryAccessors<'tcx> {
         false
     }
 
-    fn try_load_from_disk(_: TyCtxt<'tcx>, _: SerializedDepNodeIndex) -> Option<Self::Value> {
+    fn try_load_from_disk(_: TyCtxt<'tcx>, _: DepNodeIndex) -> Option<Self::Value> {
         bug!("QueryDescription::load_from_disk() called for an unsupported query.")
     }
 }
@@ -86,7 +85,7 @@ macro_rules! impl_disk_cacheable_query(
 
             #[inline]
             fn try_load_from_disk(tcx: TyCtxt<'tcx>,
-                                      id: SerializedDepNodeIndex)
+                                      id: DepNodeIndex)
                                       -> Option<Self::Value> {
                 tcx.queries.on_disk_cache.try_load_query_result(tcx, id)
             }
